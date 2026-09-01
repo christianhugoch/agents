@@ -63,6 +63,12 @@ div.prevcopilotrun:hover i.fa-trash-alt {
   left: 0.1rem;
   cursor: pointer;
 }
+.copilot-entry .resumebtn {
+  position: relative;
+  top: -1.8rem;
+  left: 0.1rem;
+  cursor: pointer;
+}
 .copilot-entry .skill-form-widget {
   position: relative;
   top: -2rem;

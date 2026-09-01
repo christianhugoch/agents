@@ -305,6 +305,13 @@ const realTimeCollabScript = (viewname, rndid, layout) => {
   );
 };
 
+// How long a run can sit in the Running status without its status being
+// touched before the view offers to resume it. The agent writes the status on
+// every pass of its loop, so a run that is still generating stays well under
+// this - one that is over it is a run the server was restarted in the middle
+// of, which nothing is generating for any more
+const STALE_RUN_MS = 15 * 60 * 1000;
+
 const agents_css = fs.readFileSync(
   path.resolve(__dirname, "agents.css"),
   "utf8",
@@ -535,6 +542,15 @@ const run = async (
       }
     runInteractions = interactMarkups.join("");
   }
+  // a run that is Running but has not changed status for a long time is a run
+  // the server was restarted in the middle of: nothing is generating for it
+  // any more, so offer the user the chance to pick it up again
+  const stale_run =
+    run &&
+    run.status === "Running" &&
+    new Date() - new Date(run.status_updated_at || run.started_at) >
+      STALE_RUN_MS;
+
   const skill_form_widgets = [];
   const _skill_instances = get_skill_instances(action.configuration);
   for (const skill of _skill_instances) {
@@ -625,6 +641,17 @@ const run = async (
         },
         i({ class: "fas fa-stop" }),
       ),
+      stale_run &&
+        button(
+          {
+            type: "button",
+            class: "btn btn-xs btn-sm btn-outline-secondary resumebtn ms-2",
+            onclick: "press_resume_button()",
+            title: req.__("This chat was interrupted. Resume it"),
+          },
+          i({ class: "fas fa-play me-1" }),
+          req.__("Resume"),
+        ),
       explainer && small({ class: "explainer" }, i(explainer)),
     ),
     stream && realTimeCollabScript(viewname, rndid, layout),
@@ -953,6 +980,13 @@ const run = async (
         const runid = $runidin.val()
         if(runid)
         view_post('${viewname}', 'cancel', {run_id:runid})
+    }
+    function press_resume_button() {
+        const runid = $("input[name=run_id").val()
+        if(!runid) return;
+        $(".resumebtn").hide()
+        spin_send_button();
+        view_post('${viewname}', 'resume', {run_id:runid, triggering_row_id:$("input[name=triggering_row_id").val(), page_load_tag:$("input[name=page_load_tag]").val()}, ${dyn_updates ? "null" : "processCopilotResponse"})
     }
     function show_agent_debug_info(info) {
       ensure_modal_exists_and_closed();
@@ -1620,6 +1654,100 @@ const interact = async (table_id, viewname, config, body, { req, res }) => {
   } else return await process_promise;
 };
 
+// Pick up a run that was interrupted - typically because the server was
+// restarted while the agent was generating or running a tool. No new user
+// message is added: the chat is continued from wherever it stopped.
+const resume = async (table_id, viewname, config, body, { req, res }) => {
+  const { run_id, triggering_row_id } = body;
+  const action =
+    config.agent_action || (await Trigger.findOne({ id: config.action_id }));
+  const run = await WorkflowRun.findOne({ id: +run_id });
+  // the send button is already spinning when we get here, so anything that
+  // stops us short of generating has to put the input back the way it was
+  const notResumed = (msg) => ({
+    json: { notify: req.__(msg), eval_js: "final_agent_response()" },
+  });
+  if (!run || (run.started_by != req.user?.id && !config.shared))
+    return notResumed("Chat not found");
+
+  // only a run the view would have offered to resume, so that a run which is
+  // in fact still generating is not started a second time by a stale page or
+  // a double click
+  if (
+    run.status !== "Running" ||
+    new Date() - new Date(run.status_updated_at || run.started_at) <=
+      STALE_RUN_MS
+  )
+    return notResumed("This chat does not need to be resumed");
+
+  let triggering_row;
+  if (table_id && (triggering_row_id || run.context.triggering_row_id)) {
+    const table = Table.findOne(table_id);
+    const pk = table?.pk_name;
+    if (table)
+      triggering_row = await table.getRow({
+        [pk]: triggering_row_id || run.context.triggering_row_id,
+      });
+  }
+
+  // an interrupted generation leaves the chat ending in an assistant message,
+  // which the LLM will not answer. Unanswered tool calls are filled in by
+  // process_interaction, and a chat ending with the user or a tool result is
+  // continued as it stands.
+  const interactions = run.context.interactions || [];
+  const lastInteract = interactions[interactions.length - 1];
+  const needsPrompt =
+    !lastInteract ||
+    !(lastInteract.role === "user" || lastInteract.role === "tool");
+  await addToContext(run, {
+    ...(needsPrompt
+      ? {
+          interactions: [
+            ...interactions,
+            {
+              role: "user",
+              content:
+                "You were interrupted. Continue with the query, or ask me for what you need to continue.",
+            },
+          ],
+        }
+      : {}),
+    status: "Running",
+  });
+  // the status is already Running, so writing the context did not touch the
+  // time it was last set. Claiming the run now stops a second click, or
+  // another tab, from resuming it a second time
+  await run.update({ status_updated_at: new Date() });
+
+  const dyn_updates = getState().getConfig("enable_dynamic_updates", true);
+  const process_promise = process_interaction(
+    run,
+    action.configuration,
+    req,
+    action.name,
+    [],
+    triggering_row,
+    config,
+    dyn_updates,
+  );
+  if (dyn_updates) {
+    process_promise.catch((e) => {
+      console.error(e);
+      getState().emitDynamicUpdate(
+        db.getTenantSchema(),
+        {
+          error: e?.message || e,
+          // resets the send button/textarea, same as on success
+          eval_js: `final_agent_response()`,
+          page_load_tag: req?.headers?.["page-load-tag"],
+        },
+        [req.user.id],
+      );
+    });
+    return;
+  } else return await process_promise;
+};
+
 const delprevrun = async (table_id, viewname, config, body, { req, res }) => {
   const { run_id } = body;
   let run;
@@ -2071,6 +2199,7 @@ module.exports = {
     skillroute,
     execute_user_action,
     cancel,
+    resume,
     tts,
     share_chat,
     renameprevrun,

@@ -439,7 +439,14 @@ const ensureToolResults = async (
 // database before it is changed.
 const setRunStatus = async (run, status) => {
   if (!run?.update || !run.id) return;
-  if (run.status === status) return;
+  if (run.status === status) {
+    // the status is not changing, but touching the time it was last written
+    // marks the run as alive: it is how the agent view tells a run that is
+    // still generating from one the server was restarted in the middle of
+    if (status === "Running")
+      await run.update({ status_updated_at: new Date() });
+    return;
+  }
   const freshRun = await WorkflowRun.findOne({ id: run.id });
   if (freshRun && freshRun.status !== run.status) run.status = freshRun.status;
   if (run.status === status || run.status === "Cancel") return;
