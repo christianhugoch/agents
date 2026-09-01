@@ -1,6 +1,6 @@
 const { describe, it, expect } = require("@jest/globals");
 
-const { renderMd, sanitizeFragment } = require("../render-md");
+const { renderMd, sanitizeFragment, balanceHtml } = require("../render-md");
 
 describe("renderMd", () => {
   it("closes unclosed structural tags", () => {
@@ -106,5 +106,51 @@ describe("sanitizeFragment", () => {
 
   it("does not wrap plain text in paragraphs", () => {
     expect(sanitizeFragment("just text")).toBe("just text");
+  });
+});
+
+describe("balanceHtml", () => {
+  it("closes a tag left open by a truncated tool response", () => {
+    // the incident: a wiki page cut off inside a <table start tag took the
+    // rest of the chat, and the input form, into itself on reload
+    const out = balanceHtml(
+      `<div class="chat-bubble"><h2>Warum?</h2>\n` +
+        `<table id="bkmrk-x" style="width: 866px; word-spacing: 0\n` +
+        `<p>[... gekuerzt]</p></div>`,
+    );
+    expect((out.match(/<table/g) || []).length).toBe(
+      (out.match(/<\/table>/g) || []).length,
+    );
+    expect((out.match(/<div/g) || []).length).toBe(
+      (out.match(/<\/div>/g) || []).length,
+    );
+  });
+
+  it("keeps the handlers and attributes the chat markup relies on", () => {
+    const button =
+      `<button data-useraction-id="2a79f7" class="btn btn-primary" ` +
+      `onclick="view_post('agent', 'execute_user_action', {rndid: &quot;2a79f7&quot;}, cb)">OK</button>`;
+    const out = balanceHtml(`<div class="d-flex mb-2">${button}</div>`);
+    expect(out).toContain("onclick=");
+    expect(out).toContain("view_post(");
+    expect(out).toContain('data-useraction-id="2a79f7"');
+    expect(out).toContain("&quot;2a79f7&quot;");
+  });
+
+  it("keeps script and style, which the sanitizing passes remove", () => {
+    // markup saltcorn generated for an embedded view is trusted and can carry
+    // both: this pass is containment, not sanitization
+    const out = balanceHtml(
+      `<div><style>.x{color:red}</style><script>init()</script></div>`,
+    );
+    expect(out).toContain("<style>");
+    expect(out).toContain("<script>");
+    expect(out).toContain("init()");
+  });
+
+  it("handles content that is not a string", () => {
+    expect(balanceHtml(null)).toBe("");
+    expect(balanceHtml(undefined)).toBe("");
+    expect(() => balanceHtml({ a: 1 })).not.toThrow();
   });
 });

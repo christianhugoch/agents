@@ -52,7 +52,7 @@ const {
   extractText,
   stripMarkdownImages,
 } = require("./common");
-const { renderMd } = require("./render-md");
+const { renderMd, balanceHtml } = require("./render-md");
 const { isWeb, escapeHtml } = require("@saltcorn/data/utils");
 const path = require("path");
 const fs = require("fs");
@@ -402,7 +402,13 @@ const run = async (
   if (run) {
     const interactMarkups = [];
     if (run.context.html_interactions) {
-      interactMarkups.push(...run.context.html_interactions);
+      // Each stored fragment is closed off on its own before they are all
+      // concatenated into the page, so that one a tool stored unbalanced - a
+      // response truncated in the middle of a tag, say - cannot swallow the
+      // messages after it, or drag the input form inside itself. The live
+      // path appends each fragment with jQuery, which parses it in isolation
+      // and so balances it already; this is the same guarantee on reload.
+      interactMarkups.push(...run.context.html_interactions.map(balanceHtml));
       // no input if interactions deleted
       if (!run.context.interactions && run.context.html_interactions.length)
         hasInputForm = false;
