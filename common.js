@@ -234,6 +234,15 @@ const incompleteCfgMsg = () => {
   }
 };
 
+// The scheduler resumes every run it finds with status Waiting, running the
+// steps of its trigger - an agent has none, so the run is loaded and a
+// transaction opened for nothing on every scheduler pass. Runs waiting for a
+// form are left to the user, so waiting for the user's next message is
+// recorded as waiting for a form to keep agent runs out of that query. It is
+// also an object rather than the null an agent run is created with, which the
+// query would throw on.
+const waitInfoFor = (status) => (status === "Waiting" ? { form: true } : {});
+
 const addToContext = async (run, newCtx) => {
   if (!run) return;
   if (run.addToContext) return await run.addToContext(newCtx);
@@ -253,6 +262,7 @@ const addToContext = async (run, newCtx) => {
       changed = true;
     } else if (k === "status") {
       extraRunSet.status = newCtx[k];
+      extraRunSet.wait_info = waitInfoFor(newCtx[k]);
     } else {
       run.context[k] = newCtx[k];
       changed = true;
@@ -433,7 +443,7 @@ const setRunStatus = async (run, status) => {
   const freshRun = await WorkflowRun.findOne({ id: run.id });
   if (freshRun && freshRun.status !== run.status) run.status = freshRun.status;
   if (run.status === status || run.status === "Cancel") return;
-  await run.update({ status });
+  await run.update({ status, wait_info: waitInfoFor(status) });
 };
 
 const process_interaction_inner = async (
