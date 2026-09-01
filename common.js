@@ -422,7 +422,21 @@ const ensureToolResults = async (
   return repaired;
 };
 
-const process_interaction = async (
+// Keep the run status in step with what the agent is doing: Running while the
+// LLM is generating or tool calls are being processed, Waiting when control is
+// handed back to the user, Error if the interaction threw. A run the user
+// cancelled keeps its Cancel status, so the status is re-read from the
+// database before it is changed.
+const setRunStatus = async (run, status) => {
+  if (!run?.update || !run.id) return;
+  if (run.status === status) return;
+  const freshRun = await WorkflowRun.findOne({ id: run.id });
+  if (freshRun && freshRun.status !== run.status) run.status = freshRun.status;
+  if (run.status === status || run.status === "Cancel") return;
+  await run.update({ status });
+};
+
+const process_interaction_inner = async (
   run,
   config,
   req,
@@ -493,6 +507,10 @@ const process_interaction = async (
       ? ""
       : "Continue";
   };
+
+  // inference is about to start, so the run is running again - it was left
+  // Waiting if the previous interaction ended by handing back to the user
+  await setRunStatus(run, "Running");
 
   // lets "cancel" stop this generate call right away, not just before the next pass
   const abortController = new AbortController();
@@ -1061,6 +1079,25 @@ const process_interaction = async (
       run_id: run?.id,
     },
   };
+};
+
+// The status of the run is maintained around the whole interaction, including
+// the recursive passes made for tool calls. The recursion is a tail call, so
+// the innermost pass sets the final status and the outer ones see it already
+// set and leave it alone. A sub-agent runs on the run of the agent that called
+// it, which is not finished when the sub-agent returns, so it leaves the
+// status to its caller.
+const process_interaction = async (...args) => {
+  const [run] = args;
+  const is_sub_agent = args[8];
+  try {
+    const result = await process_interaction_inner(...args);
+    if (!is_sub_agent) await setRunStatus(run, "Waiting");
+    return result;
+  } catch (e) {
+    if (!is_sub_agent) await setRunStatus(run, "Error");
+    throw e;
+  }
 };
 
 const replaceUserContinue = (chat, newPrompt) => {
