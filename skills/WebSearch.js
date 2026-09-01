@@ -61,10 +61,31 @@ class WebSearchSkill {
         type: "String",
         showIf: { search_provider: "By URL template" },
       },
+      {
+        name: "include_domains",
+        label: "Restrict to domains",
+        sublabel: "Comma-separated hostnames. Leave empty for no restriction.",
+        type: "String",
+        showIf: { search_provider: ["Firecrawl", "Tavily"] },
+      },
+      {
+        name: "exclude_domains",
+        label: "Exclude domains",
+        sublabel: "Comma-separated hostnames.",
+        type: "String",
+        showIf: { search_provider: ["Firecrawl", "Tavily"] },
+      },
     ];
   }
   systemPrompt() {
     return "If you need to search the web with a search phrase, use the web_search to get search engine results";
+  }
+
+  domainList(s) {
+    return String(s || "")
+      .split(",")
+      .map((d) => d.trim())
+      .filter(Boolean);
   }
 
   provideTools = () => {
@@ -75,6 +96,17 @@ class WebSearchSkill {
           case "Firecrawl":
             {
               const url = "https://api.firecrawl.dev/v2/search";
+              // Firecrawl has no include/exclude domain parameters, so domain
+              // scoping is expressed with search operators in the query
+              const inc = this.domainList(this.include_domains);
+              const exc = this.domainList(this.exclude_domains);
+              const query = [
+                row.search_phrase,
+                ...(inc.length
+                  ? [`(${inc.map((d) => `site:${d}`).join(" OR ")})`]
+                  : []),
+                ...exc.map((d) => `-site:${d}`),
+              ].join(" ");
               const options = {
                 method: "POST",
                 headers: {
@@ -82,7 +114,7 @@ class WebSearchSkill {
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  query: row.search_phrase,
+                  query,
                   sources: ["web"],
                   categories: [],
                   limit: 10,
@@ -103,16 +135,21 @@ class WebSearchSkill {
           case "Tavily":
             {
               const url = "https://api.tavily.com/search";
+              const payload = {
+                query: row.search_phrase,
+                search_depth: "advanced",
+              };
+              const inc = this.domainList(this.include_domains);
+              const exc = this.domainList(this.exclude_domains);
+              if (inc.length) payload.include_domains = inc;
+              if (exc.length) payload.exclude_domains = exc;
               const options = {
                 method: "POST",
                 headers: {
                   Authorization: "Bearer " + this.api_key,
                   "Content-Type": "application/json",
                 },
-                body: JSON.stringify({
-                  query: row.search_phrase,
-                  search_depth: "advanced",
-                }),
+                body: JSON.stringify(payload),
               };
 
               const response = await fetch(url, options);
@@ -125,15 +162,18 @@ class WebSearchSkill {
             {
               const fOpts = { method: "GET" };
               if (this.header) {
-                const [key, val] = this.header.split(":");
+                const [key, val] = this.header.split(/:(.*)/s);
                 const myHeaders = new Headers();
-                myHeaders.append(key, val.trim());
+                myHeaders.append(key.trim(), (val || "").trim());
                 fOpts.headers = myHeaders;
               }
-              const url = interpolate(this.url_template, {
-                q: row.search_phrase,
-              });
-              const resp = await fetch(url);
+              // not interpolate(): {{q}} is too short for its placeholder
+              // pattern, and it HTML-escapes where a URL needs URL-encoding
+              const url = this.url_template.replace(
+                /\{\{\s*q\s*\}\}/g,
+                encodeURIComponent(row.search_phrase)
+              );
+              const resp = await fetch(url, fOpts);
               return await resp.text();
             }
             break;

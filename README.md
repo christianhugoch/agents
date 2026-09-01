@@ -148,3 +148,51 @@ has been summarized away will no longer be found by a search.
 
 If the agent starts forgetting things it should not, the setting to change first
 is *Summary instructions*: tell it what matters for this particular agent.
+### Web search
+
+Gives the agent a tool to search the internet and read back the results. Three
+providers are offered:
+
+- **Tavily** and **Firecrawl**, two search services built for AI agents. Both
+  need an account and an API key, and both return results already tidied up for
+  the agent to read.
+- **By URL template**, for any other search engine that answers over a plain
+  URL. Write the address of the search page with `{{q}}` where the search
+  phrase belongs, for example
+  `https://api.search.brave.com/res/v1/web/search?q={{q}}`. If the engine needs
+  an API key in a header, put it in *Header*. Whatever the page returns is
+  handed to the agent as it stands.
+
+**Choosing which sites the agent may use**
+
+An agent gathering evidence usually should not be searching the whole web. It
+should be looking at the statistics office, the professional body, the
+regulator - and not at comparison sites, forums or advertising pages.
+
+*Restrict to domains* and *Exclude domains* do this. Write hostnames separated
+by commas, for example `ons.gov.uk, nice.org.uk`. Anything in *Restrict to
+domains* becomes the only place the agent can find results; anything in *Exclude
+domains* is kept out of them.
+
+This is worth doing even if the agent has already been told in its prompt which
+sources to prefer. A prompt is a request the agent may quietly ignore on a
+search that finds nothing; these settings are applied to the search itself, so
+there is no result from an unwanted site for the agent to cite. Leave both empty
+and the agent searches the whole web as before.
+
+Both fields apply to Tavily and Firecrawl. Tavily filters on the domains
+directly. Firecrawl has no such setting, so the restriction is added to the
+search phrase as `site:` terms, which its search engine understands; the effect
+is the same but it depends on the engine honouring them, so Tavily is the surer
+choice if strict source control matters.
+
+**Settings**
+
+| Setting | Meaning |
+|---|---|
+| Search provider | Tavily, Firecrawl, or any other engine by URL template. |
+| URL template | For *By URL template* only. The search address, with `{{q}}` where the search phrase goes. |
+| Header | For *By URL template* only. One header sent with the request, written as `Name: value`, for example `X-Subscription-Token: YOUR_API_KEY`. |
+| API key | For Tavily and Firecrawl. |
+| Restrict to domains | Optional. Comma-separated hostnames the agent may use. Empty means no restriction. |
+| Exclude domains | Optional. Comma-separated hostnames the agent may not use. |
