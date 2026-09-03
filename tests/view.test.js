@@ -7,7 +7,7 @@ const WorkflowRun = require("@saltcorn/data/models/workflow_run");
 const User = require("@saltcorn/data/models/user");
 
 const { mockReqRes } = require("@saltcorn/data/tests/mocks");
-const { afterAll, beforeAll, describe, it, expect } = require("@jest/globals");
+const { afterAll, beforeAll, describe, it, expect, jest } = require("@saltcorn/db-common/test_expect");
 
 /* 
  
@@ -169,7 +169,7 @@ describe("agent view route ownership checks", () => {
         { run_id: run.id, skillid: "x" },
         { req: { user: { id: other_user_id } }, res: {} }
       )
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(undefined);
   });
 
   it("skillroute proceeds past the ownership check for the owner", async () => {
@@ -197,7 +197,7 @@ describe("agent view route ownership checks", () => {
         { run_id: run.id, rndid: "r1", uaname: "ua" },
         { req: { user: { id: other_user_id } }, res: {} }
       )
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(undefined);
   });
 
   it("execute_user_action proceeds past the ownership check for the owner", async () => {
